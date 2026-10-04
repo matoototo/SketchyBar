@@ -12,6 +12,7 @@ void popup_init(struct popup* popup, struct bar_item* host) {
   popup->needs_ordering = false;
   popup->anchor = (CGPoint){0, 0};
   popup->y_offset = 0;
+  popup->chin = 0;
   popup->adid = 0;
   popup->align = POSITION_LEFT;
   popup->blur_radius = 0;
@@ -216,6 +217,7 @@ void popup_calculate_bounds(struct popup* popup, struct bar* bar) {
   else if (!popup->background.enabled || !popup->background.image.enabled) {
     width += popup->background.border_width;
   }
+  y += popup->chin;
   y += popup->background.border_width;
 
   popup->background.bounds.size.width = width;
@@ -399,6 +401,7 @@ void popup_serialize(struct popup* popup, char* indent, FILE* rsp) {
                "%s\"height\": %d,\n"
                "%s\"blur_radius\": %u,\n"
                "%s\"y_offset\": %d,\n"
+               "%s\"chin\": %d,\n"
                "%s\"align\": \"%s\",\n"
                "%s\"background\": {\n",
                indent, format_bool(popup->drawing),
@@ -406,6 +409,7 @@ void popup_serialize(struct popup* popup, char* indent, FILE* rsp) {
                indent, popup->overrides_cell_size ? popup->cell_size : -1,
                indent, popup->blur_radius,
                indent, popup->y_offset,
+               indent, popup->chin,
                indent, align, indent                                      );
 
   char deeper_indent[strlen(indent) + 2];
@@ -444,6 +448,9 @@ bool popup_parse_sub_domain(struct popup* popup, FILE* rsp, struct token propert
   bool needs_refresh = false;
   if (token_equals(property, PROPERTY_YOFFSET)) {
     ANIMATE(popup_set_yoffset, popup, popup->y_offset, token_to_int(get_token(&message)));
+  } else if (token_equals(property, PROPERTY_CHIN)) {
+    popup->chin = token_to_int(get_token(&message));
+    return true;
   } else if (token_equals(property, PROPERTY_DRAWING)) {
     return popup_set_drawing(popup,
                              evaluate_boolean_state(get_token(&message),

@@ -20,6 +20,7 @@ struct popup {
   uint32_t cell_size;
   uint32_t blur_radius;
   int y_offset;
+  int chin;
 
   CGPoint anchor;
   struct window window;

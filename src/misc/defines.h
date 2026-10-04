@@ -104,6 +104,7 @@
 #define PROPERTY_MAX_CHARS                     "max_chars"
 #define PROPERTY_MARKUP                        "markup"
 #define PROPERTY_FLOW                          "flow"
+#define PROPERTY_CHIN                          "chin"
 #define SUB_DOMAIN_SHAPE                       "shape"
 #define ARGUMENT_RECT                          "rect"
 #define ARGUMENT_ROUND_RECT                    "round_rect"
