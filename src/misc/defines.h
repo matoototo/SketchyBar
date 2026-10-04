@@ -102,6 +102,7 @@
 #define PROPERTY_EVENT_PORT                    "mach_helper"
 #define PROPERTY_PERCENTAGE                    "percentage"
 #define PROPERTY_MAX_CHARS                     "max_chars"
+#define PROPERTY_MARKUP                        "markup"
 
 #define DOMAIN_BAR                             "--bar"
 #define PROPERTY_POSITION                      "position"

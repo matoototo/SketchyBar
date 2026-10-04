@@ -13,6 +13,7 @@ struct text {
   bool highlight;
   bool drawing;
   bool has_const_width;
+  bool markup;
 
   char align;
   char* string;

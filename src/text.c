@@ -1,8 +1,146 @@
 #include "text.h"
 #include "bar_manager.h"
 
+#define TEXT_MARKUP_MAX_RUNS 128
+
+// Shared tail of both prepare paths: the line must already be set on text.
+static void text_compute_metrics(struct text* text) {
+  double typographic_width = CTLineGetTypographicBounds(text->line.line,
+                                                        &text->line.ascent,
+                                                        &text->line.descent,
+                                                        NULL                );
+
+  text->bounds = CTLineGetBoundsWithOptions(text->line.line,
+                                            kCTLineBoundsUseGlyphPathBounds);
+
+  // extra 1px padding for width and height to prevent clipping
+  text->bounds.size.width = (uint32_t) (text->bounds.size.width + 1.5);
+  text->bounds.size.height = (uint32_t) (text->bounds.size.height + 1.5);
+  text->bounds.origin.x = (int32_t) (text->bounds.origin.x + 0.5);
+  text->bounds.origin.y = (int32_t) (text->bounds.origin.y + 0.5);
+
+  // when typographical_width is enabled, we don't need the extra 1px padding
+  // to prevent clipping, as it already accounts for the full advance width
+  if (text->font.typographical_width)
+    text->width = (uint32_t) (typographic_width + 0.5);
+  else
+    text->width = text->bounds.size.width;
+}
+
+// Builds the line from a string containing ANSI SGR color escapes:
+// ESC[38;2;r;g;bm sets the color (the 4-parameter form ESC[38;2;a;r;g;bm
+// carries alpha), ESC[0m or ESC[39m resets to the line's own color. Escapes
+// never reach the rendered string. Runs are baked at prepare time, so later
+// animations of the line's base color do not retroact on marked-up ranges.
+static void text_prepare_line_markup(struct text* text) {
+  if (text->font.font_changed) {
+    font_create_ctfont(&text->font);
+    text->font.font_changed = false;
+  }
+
+  CFMutableStringRef string = CFStringCreateMutable(NULL, 0);
+  CGColorRef run_color[TEXT_MARKUP_MAX_RUNS];
+  CFIndex run_offset[TEXT_MARKUP_MAX_RUNS];
+  int run_count = 0;
+
+  CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+  struct color current = text->color;
+  CGFloat components[4] = { current.r, current.g, current.b, current.a };
+  run_color[run_count] = CGColorCreate(color_space, components);
+  run_offset[run_count] = 0;
+  run_count++;
+
+  const unsigned char* p = (const unsigned char*)text->string;
+  while (*p) {
+    if (p[0] == 0x1b && p[1] == '[') {
+      const unsigned char* q = p + 2;
+      int params[16];
+      int nparams = 0;
+      while (nparams < 16 && *q && *q != 'm') {
+        int value = 0;
+        bool digits = false;
+        while (*q >= '0' && *q <= '9') {
+          value = value * 10 + (*q - '0');
+          digits = true;
+          q++;
+        }
+        params[nparams++] = digits ? value : 0;
+        if (*q == ';') q++;
+        else break;
+      }
+
+      if (*q == 'm') {
+        int i = 0;
+        while (i < nparams) {
+          if (params[i] == 0 || params[i] == 39) {
+            current = text->color;
+            i += 1;
+          } else if (params[i] == 38 && i + 1 < nparams && params[i + 1] == 2) {
+            int remaining = nparams - i - 2;
+            if (remaining >= 4) {
+              color_init(&current, ((uint32_t)params[i + 2] & 0xff) << 24
+                                   | ((uint32_t)params[i + 3] & 0xff) << 16
+                                   | ((uint32_t)params[i + 4] & 0xff) << 8
+                                   | ((uint32_t)params[i + 5] & 0xff));
+              i += 6;
+            } else if (remaining == 3) {
+              color_init(&current, 0xff000000u
+                                   | ((uint32_t)params[i + 2] & 0xff) << 16
+                                   | ((uint32_t)params[i + 3] & 0xff) << 8
+                                   | ((uint32_t)params[i + 4] & 0xff));
+              i += 5;
+            } else break;
+          } else i += 1;
+        }
+
+        if (run_count < TEXT_MARKUP_MAX_RUNS) {
+          struct color c = current;
+          CGFloat comps[4] = { c.r, c.g, c.b, c.a };
+          run_color[run_count] = CGColorCreate(color_space, comps);
+          run_offset[run_count] = CFStringGetLength(string);
+          run_count++;
+        }
+        p = (const unsigned char*)(q + 1);
+        continue;
+      }
+    }
+
+    int char_len = 1;
+    while ((p[char_len] & 0xC0) == 0x80) char_len++;
+    CFStringRef chunk = CFStringCreateWithBytes(NULL, p, char_len,
+                                                kCFStringEncodingUTF8, false);
+    CFStringAppend(string, chunk);
+    CFRelease(chunk);
+    p += char_len;
+  }
+
+  CFIndex total = CFStringGetLength(string);
+  CFMutableAttributedStringRef attr_string = CFAttributedStringCreateMutable(NULL, total);
+  CFAttributedStringReplaceString(attr_string, CFRangeMake(0, 0), string);
+
+  for (int i = 0; i < run_count; i++) {
+    CFIndex end = (i + 1 < run_count) ? run_offset[i + 1] : total;
+    if (end <= run_offset[i]) continue;
+    CFRange range = CFRangeMake(run_offset[i], end - run_offset[i]);
+    CFAttributedStringSetAttribute(attr_string, range,
+                                   kCTFontAttributeName, text->font.ct_font);
+    CFAttributedStringSetAttribute(attr_string, range,
+                                   kCTForegroundColorAttributeName, run_color[i]);
+  }
+
+  text->line.line = CTLineCreateWithAttributedString(attr_string);
+  text_compute_metrics(text);
+
+  for (int i = 0; i < run_count; i++) CFRelease(run_color[i]);
+  CGColorSpaceRelease(color_space);
+  CFRelease(string);
+  CFRelease(attr_string);
+}
+
 static void text_calculate_truncated_width(struct text* text, CFDictionaryRef attributes) {
-  if (text->max_chars > 0) {
+  // max_chars operates on the raw string, escapes would leak into the
+  // truncated copy: not supported together with markup.
+  if (text->max_chars > 0 && !text->markup) {
     uint32_t len = strlen(text->string) + 4;
     char buffer[len];
     memset(buffer, 0, len);
@@ -43,6 +181,11 @@ static void text_prepare_line(struct text* text) {
   const void *keys[] = { kCTFontAttributeName,
                          kCTForegroundColorFromContextAttributeName };
 
+  if (text->markup) {
+    text_prepare_line_markup(text);
+    return;
+  }
+
   if (text->font.font_changed) {
     font_create_ctfont(&text->font);
     text->font.font_changed = false;
@@ -69,26 +212,7 @@ static void text_prepare_line(struct text* text) {
 
   text->line.line = CTLineCreateWithAttributedString(attr_string);
 
-  double typographic_width = CTLineGetTypographicBounds(text->line.line,
-                                                        &text->line.ascent,
-                                                        &text->line.descent,
-                                                        NULL                );
-
-  text->bounds = CTLineGetBoundsWithOptions(text->line.line,
-                                            kCTLineBoundsUseGlyphPathBounds);
-
-  // extra 1px padding for width and height to prevent clipping
-  text->bounds.size.width = (uint32_t) (text->bounds.size.width + 1.5);
-  text->bounds.size.height = (uint32_t) (text->bounds.size.height + 1.5);
-  text->bounds.origin.x = (int32_t) (text->bounds.origin.x + 0.5);
-  text->bounds.origin.y = (int32_t) (text->bounds.origin.y + 0.5);
-
-  // when typographical_width is enabled, we don't need the extra 1px padding
-  // to prevent clipping, as it already accounts for the full advance width
-  if (text->font.typographical_width)
-    text->width = (uint32_t) (typographic_width + 0.5);
-  else
-    text->width = text->bounds.size.width;
+  text_compute_metrics(text);
 
   CFRelease(string);
   CFRelease(attr_string);
@@ -129,6 +253,7 @@ void text_copy(struct text* text, struct text* source) {
   font_set_style(&text->font, string_copy(source->font.style), true);
   font_set_size(&text->font, source->font.size);
   font_set_typographical_width(&text->font, source->font.typographical_width);
+  text->markup = source->markup;
   text_set_string(text, string_copy(source->string), true);
 }
 
@@ -141,6 +266,7 @@ void text_init(struct text* text) {
   text->drawing = true;
   text->highlight = false;
   text->has_const_width = false;
+  text->markup = false;
   text->custom_width = 0;
   text->padding_left = 0;
   text->padding_right = 0;
@@ -388,6 +514,7 @@ void text_serialize(struct text* text, char* indent, FILE* rsp) {
 
   fprintf(rsp, "%s\"value\": \"%s\",\n"
                "%s\"drawing\": \"%s\",\n"
+               "%s\"markup\": \"%s\",\n"
                "%s\"highlight\": \"%s\",\n"
                "%s\"color\": \"0x%x\",\n"
                "%s\"highlight_color\": \"0x%x\",\n"
@@ -401,6 +528,7 @@ void text_serialize(struct text* text, char* indent, FILE* rsp) {
                "%s\"background\": {\n",
                indent, text->string,
                indent, format_bool(text->drawing),
+               indent, format_bool(text->markup),
                indent, format_bool(text->highlight),
                indent, text->color.hex,
                indent, text->highlight_color.hex,
@@ -557,6 +685,11 @@ bool text_parse_sub_domain(struct text* text, FILE* rsp, struct token property, 
     return changed;
   } else if (token_equals(property, PROPERTY_MAX_CHARS)) {
     return text_set_max_chars(text, token_to_int(get_token(&message)));
+  } else if (token_equals(property, PROPERTY_MARKUP)) {
+    bool prev = text->markup;
+    text->markup = evaluate_boolean_state(get_token(&message), text->markup);
+    if (prev != text->markup) text_set_string(text, text->string, true);
+    return prev != text->markup;
   }
   else {
     struct key_value_pair key_value_pair = get_key_value_pair(property.text,
