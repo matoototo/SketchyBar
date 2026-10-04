@@ -57,6 +57,7 @@ void bar_item_init(struct bar_item* bar_item, struct bar_item* default_item) {
   background_init(&bar_item->background);
   env_vars_init(&bar_item->signal_args.env_vars);
   popup_init(&bar_item->popup, bar_item);
+  shapes_init(&bar_item->shapes);
   graph_init(&bar_item->graph);
   alias_init(&bar_item->alias);
   slider_init(&bar_item->slider);
@@ -497,7 +498,8 @@ static uint32_t bar_item_get_content_length(struct bar_item* bar_item) {
          + text_get_length(&bar_item->label, false)
          + (bar_item->has_graph  ? graph_get_length(&bar_item->graph) : 0)
          + (bar_item->has_slider ? slider_get_length(&bar_item->slider) : 0)
-         + (bar_item->has_alias  ? alias_get_length(&bar_item->alias) : 0);
+         + (bar_item->has_alias  ? alias_get_length(&bar_item->alias) : 0)
+         + shapes_get_length(&bar_item->shapes);
  
   return max(length, 0);
 }
@@ -633,7 +635,8 @@ uint32_t bar_item_calculate_bounds(struct bar_item* bar_item, uint32_t bar_heigh
 
   uint32_t icon_position = content_x;
   uint32_t label_position = icon_position + text_get_length(&bar_item->icon,
-                                                            false           );
+                                                            false           )
+                                               + shapes_get_length(&bar_item->shapes);
 
   uint32_t sandwich_position = label_position;
   if (bar_item->has_graph) {
@@ -652,6 +655,18 @@ uint32_t bar_item_calculate_bounds(struct bar_item* bar_item, uint32_t bar_heigh
   text_calculate_bounds(&bar_item->label,
                         label_position,
                         content_y + bar_item->y_offset);
+
+  if (bar_item->shapes.count) {
+    uint32_t content_right = label_position
+                             + text_get_length(&bar_item->label, false);
+    shapes_calculate_bounds(&bar_item->shapes,
+                            content_x,
+                            icon_position + text_get_length(&bar_item->icon, false),
+                            content_right,
+                            content_y + bar_item->y_offset,
+                            bar_item_get_content_length(bar_item),
+                            bar_height                             );
+  }
 
   if (bar_item->has_alias)
     alias_calculate_bounds(&bar_item->alias,
@@ -718,6 +733,7 @@ void bar_item_draw(struct bar_item* bar_item, CGContextRef context) {
   background_draw(&bar_item->background, context);
   if (bar_item->type == BAR_COMPONENT_GROUP) return;
 
+  shapes_draw(&bar_item->shapes, context);
   text_draw(&bar_item->icon, context);
   text_draw(&bar_item->label, context);
 
@@ -742,6 +758,8 @@ static void bar_item_clear_pointers(struct bar_item* bar_item) {
   bar_item->signal_args.env_vars.count = 0;
   bar_item->windows = NULL;
   bar_item->num_windows = 0;
+  bar_item->shapes.shapes = NULL;
+  bar_item->shapes.count = 0;
   text_clear_pointers(&bar_item->icon);
   text_clear_pointers(&bar_item->label);
   background_clear_pointers(&bar_item->background);
@@ -769,6 +787,8 @@ void bar_item_inherit_from_item(struct bar_item* bar_item, struct bar_item* ance
   text_copy(&bar_item->icon, &ancestor->icon);
   text_copy(&bar_item->label, &ancestor->label);
   text_copy(&bar_item->slider.knob, &ancestor->slider.knob);
+
+  shapes_copy(&bar_item->shapes, &ancestor->shapes);
 
   if (ancestor->script)
     bar_item_set_script(bar_item, string_copy(ancestor->script));
@@ -811,6 +831,7 @@ void bar_item_destroy(struct bar_item* bar_item, bool free_memory) {
   graph_destroy(&bar_item->graph);
   alias_destroy(&bar_item->alias);
   slider_destroy(&bar_item->slider);
+  shapes_destroy(&bar_item->shapes);
 
   if (bar_item->group && bar_item->type == BAR_COMPONENT_GROUP)
     group_destroy(bar_item->group);
@@ -955,6 +976,12 @@ void bar_item_serialize(struct bar_item* bar_item, FILE* rsp) {
   } 
   fprintf(rsp, "\n\t}");
 
+  if (bar_item->shapes.count) {
+    fprintf(rsp, ",\n\t\"shapes\": [\n");
+    shapes_serialize(&bar_item->shapes, "\t\t", rsp);
+    fprintf(rsp, "\n\t]");
+  }
+
   if (bar_item->popup.num_items > 0) {
     fprintf(rsp, ",\n\t\"popup\": {\n");
     popup_serialize(&bar_item->popup, "\t\t", rsp);
@@ -1009,6 +1036,12 @@ void bar_item_parse_set_message(struct bar_item* bar_item, char* message, FILE* 
                                              rsp,
                                              entry,
                                              message          );
+    }
+    else if (token_equals(subdom, SUB_DOMAIN_SHAPE)) {
+      needs_refresh = shapes_parse_sub_domain(&bar_item->shapes,
+                                              rsp,
+                                              entry,
+                                              message          );
     }
     else if (token_equals(subdom, SUB_DOMAIN_GRAPH)) {
       if (bar_item->has_graph || bar_item == &g_bar_manager.default_item) {

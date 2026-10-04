@@ -7,6 +7,7 @@
 #include "misc/env_vars.h"
 #include "misc/helpers.h"
 #include "popup.h"
+#include "shapes.h"
 #include "text.h"
 #include "slider.h"
 
@@ -65,6 +66,9 @@ struct bar_item {
 
   // Label properties
   struct text label;
+
+  // Shape Data
+  struct shape_list shapes;
 
   // Graph Data
   bool has_graph;

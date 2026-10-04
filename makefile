@@ -15,7 +15,7 @@ LIBS     = -framework Carbon \
 ODIR     = bin
 SRC      = src
 
-_OBJ = alias.o background.o bar_item.o custom_events.o event.o graph.o \
+_OBJ = alias.o background.o bar_item.o custom_events.o event.o graph.o shapes.o \
 			 image.o mouse.o shadow.o font.o text.o message.o mouse.o bar.o color.o \
 			 window.o bar_manager.o display.o display_nsscreen.om group.o mach.o popup.o \
 			 animation.o workspace.om volume.o slider.o power.o wifi.om media.om \

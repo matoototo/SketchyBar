@@ -103,6 +103,12 @@
 #define PROPERTY_PERCENTAGE                    "percentage"
 #define PROPERTY_MAX_CHARS                     "max_chars"
 #define PROPERTY_MARKUP                        "markup"
+#define PROPERTY_FLOW                          "flow"
+#define SUB_DOMAIN_SHAPE                       "shape"
+#define ARGUMENT_RECT                          "rect"
+#define ARGUMENT_ROUND_RECT                    "round_rect"
+#define ARGUMENT_LINE                          "line"
+#define ARGUMENT_CIRCLE                        "circle"
 
 #define DOMAIN_BAR                             "--bar"
 #define PROPERTY_POSITION                      "position"
